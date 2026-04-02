@@ -2,6 +2,7 @@ from passlib.context import CryptContext
 from jose import jwt, JWTError
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials # <-- NEW: For checking tokens
 from sqlalchemy.orm import Session, joinedload
 from datetime import datetime, timedelta
 from typing import Optional
@@ -41,6 +42,7 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 1440 # 24 hours
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+security = HTTPBearer() # <-- NEW: Instructs FastAPI to look for a "Bearer" token in headers
 
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
@@ -54,17 +56,35 @@ def create_access_token(data: dict):
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
+# --- NEW: TOKEN VERIFIER (THE BOUNCER) ---
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)):
+    """
+    This function intercepts protected requests, decodes the JWT token, 
+    and returns the currently logged-in user.
+    """
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email: str = payload.get("sub")
+        if email is None:
+            raise HTTPException(status_code=401, detail="Invalid token structure")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Token is expired or invalid")
+    
+    user = db.query(models.User).filter(models.User.email == email).first()
+    if user is None:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user
+
 
 # --- AUTHENTICATION ENDPOINTS ---
 
 @app.post("/api/register")
 def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
-    # Check if user already exists
     db_user = db.query(models.User).filter(models.User.email == user.email).first()
     if db_user:
         raise HTTPException(status_code=400, detail="Email already registered")
     
-    # Hash password and save (Safe because of schemas.UserCreate validation)
     hashed_pwd = get_password_hash(user.password)
     new_user = models.User(email=user.email, hashed_password=hashed_pwd, name=user.name)
     
@@ -72,7 +92,6 @@ def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(new_user)
     
-    # Generate token
     token = create_access_token(data={"sub": new_user.email})
     return {"access_token": token, "token_type": "bearer", "user_name": new_user.name}
 
@@ -80,7 +99,6 @@ def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
 def login_user(user: schemas.UserLogin, db: Session = Depends(get_db)):
     db_user = db.query(models.User).filter(models.User.email == user.email).first()
     
-    # Verify user exists and password matches
     if not db_user or not verify_password(user.password, db_user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -215,3 +233,75 @@ def get_recommendations(movie_id: int, db: Session = Depends(get_db)):
         "cast": [format_mini_card(m) for m in cast_matches],
         "similar": [format_mini_card(m) for m in similar_matches]
     }
+
+
+# --- NEW: USER FEATURES & PROFILE ---
+
+@app.post("/api/movies/{movie_id}/like")
+def toggle_like_movie(movie_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Toggle a movie in the user's liked list."""
+    movie = db.query(models.Movie).filter(models.Movie.id == movie_id).first()
+    if not movie:
+        raise HTTPException(status_code=404, detail="Movie not found")
+        
+    if movie in current_user.liked_movies:
+        current_user.liked_movies.remove(movie)
+        action = "removed from"
+    else:
+        current_user.liked_movies.append(movie)
+        action = "added to"
+        
+    db.commit()
+    return {"message": f"Movie {action} favorites"}
+
+@app.post("/api/movies/{movie_id}/watch-later")
+def toggle_watch_later(movie_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Toggle a movie in the user's watch later list."""
+    movie = db.query(models.Movie).filter(models.Movie.id == movie_id).first()
+    if not movie:
+        raise HTTPException(status_code=404, detail="Movie not found")
+        
+    if movie in current_user.watch_later_movies:
+        current_user.watch_later_movies.remove(movie)
+        action = "removed from"
+    else:
+        current_user.watch_later_movies.append(movie)
+        action = "added to"
+        
+    db.commit()
+    return {"message": f"Movie {action} watch later"}
+
+@app.post("/api/movies/{movie_id}/reviews", response_model=schemas.ReviewResponse)
+def create_review(movie_id: int, review: schemas.ReviewCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Allow a user to post a review for a movie."""
+    movie = db.query(models.Movie).filter(models.Movie.id == movie_id).first()
+    if not movie:
+        raise HTTPException(status_code=404, detail="Movie not found")
+        
+    # Create the new review in the database
+    new_review = models.Review(
+        content=review.content,
+        rating=review.rating,
+        user_id=current_user.id,
+        movie_id=movie.id
+    )
+    
+    db.add(new_review)
+    db.commit()
+    db.refresh(new_review)
+    
+    # Attach the author's name manually for the response schema
+    new_review.author_name = current_user.name 
+    return new_review
+
+@app.get("/api/users/me", response_model=schemas.UserProfileResponse)
+def get_user_profile(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Fetch the currently logged in user's profile, including their lists and reviews."""
+    # current_user already has the liked_movies and watch_later_movies attached 
+    # thanks to SQLAlchemy relationships! We just return it directly.
+    
+    # We loop through reviews to attach the author name so the frontend can display it easily
+    for review in current_user.reviews:
+        review.author_name = current_user.name
+        
+    return current_user

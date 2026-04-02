@@ -1,15 +1,46 @@
 import React, { useState, useEffect } from "react";
+import { fetchWithAuth } from "../utils/api";
 
-const MovieModal = ({ movie, onClose }) => {
+// NEW: Accept the userSavedIds prop
+const MovieModal = ({ movie, onClose, onMovieSelect, userSavedIds }) => {
   const [prediction, setPrediction] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
-  // Updated state to match the 3 Colab rows
   const [recs, setRecs] = useState({ director: [], cast: [], similar: [] });
   const [loadingRecs, setLoadingRecs] = useState(true);
 
+  // Review State
+  const [reviewContent, setReviewContent] = useState("");
+  const [reviewRating, setReviewRating] = useState(0);
+  const [reviewStatus, setReviewStatus] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // --- NEW: Action Button State ---
+  const [isLiked, setIsLiked] = useState(false);
+  const [inWatchLater, setInWatchLater] = useState(false);
+
+  // --- NEW: Sync the buttons with the database memory ---
+  useEffect(() => {
+    if (userSavedIds && movie) {
+      setIsLiked(userSavedIds.liked?.includes(movie.id) || false);
+      setInWatchLater(userSavedIds.watchLater?.includes(movie.id) || false);
+    }
+  }, [userSavedIds, movie]);
+
+  // Main Movie Load Effect
   useEffect(() => {
     if (!movie) return;
+
+    setPrediction(null);
+    setReviewContent("");
+    setReviewRating(0);
+    setReviewStatus(null);
+
+    const modalContainer = document.getElementById("modal-scroll-container");
+    if (modalContainer) {
+      modalContainer.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
     setLoadingRecs(true);
     fetch(`http://localhost:8000/api/movies/${movie.id}/recommendations`)
       .then((res) => res.json())
@@ -22,6 +53,27 @@ const MovieModal = ({ movie, onClose }) => {
 
   const handleBackdropClick = (e) => {
     if (e.target.id === "modal-backdrop") onClose();
+  };
+
+  // --- NEW: Action Button Handlers ---
+  const handleLike = async () => {
+    try {
+      await fetchWithAuth(`/movies/${movie.id}/like`, { method: "POST" });
+      setIsLiked(!isLiked);
+    } catch (error) {
+      alert("Please log in to like movies.");
+    }
+  };
+
+  const handleWatchLater = async () => {
+    try {
+      await fetchWithAuth(`/movies/${movie.id}/watch-later`, {
+        method: "POST",
+      });
+      setInWatchLater(!inWatchLater);
+    } catch (error) {
+      alert("Please log in to save movies.");
+    }
   };
 
   const runAiPredictor = async () => {
@@ -46,6 +98,33 @@ const MovieModal = ({ movie, onClose }) => {
     }
   };
 
+  const handleReviewSubmit = async () => {
+    if (!reviewContent.trim() || reviewRating === 0) return;
+
+    setIsSubmitting(true);
+    setReviewStatus(null);
+
+    try {
+      await fetchWithAuth(`/movies/${movie.id}/reviews`, {
+        method: "POST",
+        body: JSON.stringify({
+          content: reviewContent,
+          rating: reviewRating,
+        }),
+      });
+      setReviewStatus({ type: "success", text: "Review posted successfully!" });
+      setReviewContent("");
+      setReviewRating(0);
+    } catch (error) {
+      setReviewStatus({
+        type: "error",
+        text: "Must be logged in to leave a review.",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const formatCurrency = (amount) => {
     if (!amount || amount === 0) return "N/A";
     if (amount >= 1e9) return `$${(amount / 1e9).toFixed(1)}B`;
@@ -61,7 +140,10 @@ const MovieModal = ({ movie, onClose }) => {
       onClick={handleBackdropClick}
       className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-fade-in"
     >
-      <div className="bg-[#121212] border border-zinc-800 rounded-3xl max-w-4xl w-full max-h-[90vh] overflow-y-auto shadow-2xl relative custom-scrollbar">
+      <div
+        id="modal-scroll-container"
+        className="bg-[#121212] border border-zinc-800 rounded-3xl max-w-4xl w-full max-h-[90vh] overflow-y-auto shadow-2xl relative custom-scrollbar scroll-smooth"
+      >
         <button
           onClick={onClose}
           className="absolute top-4 right-4 bg-black/50 hover:bg-brand-accent text-white p-2 rounded-full transition-colors z-10"
@@ -152,6 +234,32 @@ const MovieModal = ({ movie, onClose }) => {
             </p>
           </div>
 
+          {/* --- NEW: LARGE ACTION BUTTONS --- */}
+          <div className="flex flex-col sm:flex-row gap-4 mt-8 pt-8 border-t border-zinc-800">
+            <button
+              onClick={handleLike}
+              className={`flex-1 py-4 rounded-xl text-sm font-bold transition-all border flex items-center justify-center gap-2 ${
+                isLiked
+                  ? "bg-red-500/10 text-red-500 border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.2)]"
+                  : "bg-zinc-800/50 text-zinc-400 border-zinc-700 hover:bg-zinc-700 hover:text-white"
+              }`}
+            >
+              {isLiked ? "❤️ Liked" : "🤍 Like this Title"}
+            </button>
+
+            <button
+              onClick={handleWatchLater}
+              className={`flex-1 py-4 rounded-xl text-sm font-bold transition-all border flex items-center justify-center gap-2 ${
+                inWatchLater
+                  ? "bg-blue-500/10 text-blue-400 border-blue-500/50 shadow-[0_0_15px_rgba(59,130,246,0.2)]"
+                  : "bg-zinc-800/50 text-zinc-400 border-zinc-700 hover:bg-zinc-700 hover:text-white"
+              }`}
+            >
+              {inWatchLater ? "🔖 Saved for Later" : "➕ Add to Watch Later"}
+            </button>
+          </div>
+
+          {/* AI Predictor Section */}
           <div className="mt-8 pt-8 border-t border-zinc-800 flex flex-col sm:flex-row items-center justify-between gap-6">
             <div className="flex-1 w-full">
               {prediction ? (
@@ -188,6 +296,55 @@ const MovieModal = ({ movie, onClose }) => {
             </button>
           </div>
 
+          {/* WRITE A REVIEW SECTION */}
+          <div className="mt-8 pt-8 border-t border-zinc-800">
+            <h3 className="text-xl font-black text-white mb-4">
+              Leave a Review
+            </h3>
+            <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl">
+              <div className="flex items-center gap-2 mb-4">
+                <span className="text-xs text-zinc-500 uppercase tracking-widest font-bold mr-2">
+                  Rating:
+                </span>
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <button
+                    key={star}
+                    onClick={() => setReviewRating(star)}
+                    className={`text-2xl transition-colors ${star <= reviewRating ? "text-yellow-500" : "text-zinc-700 hover:text-yellow-500/50"}`}
+                  >
+                    ★
+                  </button>
+                ))}
+              </div>
+              <textarea
+                value={reviewContent}
+                onChange={(e) => setReviewContent(e.target.value)}
+                placeholder="What did you think of this movie?"
+                className="w-full bg-black/50 border border-zinc-800 rounded-xl p-4 text-white text-sm focus:outline-none focus:border-brand-accent resize-none min-h-[100px]"
+              />
+              <div className="flex items-center justify-between mt-4">
+                <div>
+                  {reviewStatus && (
+                    <span
+                      className={`text-sm font-bold ${reviewStatus.type === "success" ? "text-emerald-500" : "text-red-500"}`}
+                    >
+                      {reviewStatus.text}
+                    </span>
+                  )}
+                </div>
+                <button
+                  onClick={handleReviewSubmit}
+                  disabled={
+                    isSubmitting || !reviewContent.trim() || reviewRating === 0
+                  }
+                  className="bg-white text-black hover:bg-zinc-200 px-6 py-2 rounded-lg font-bold text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isSubmitting ? "Posting..." : "Post Review"}
+                </button>
+              </div>
+            </div>
+          </div>
+
           {/* THE 3 RECOMMENDATION ROWS */}
           {!loadingRecs && (
             <div className="mt-12 pt-8 border-t border-zinc-800">
@@ -195,7 +352,7 @@ const MovieModal = ({ movie, onClose }) => {
                 Related Transmissions
               </h3>
 
-              {/* ROW 1: Similar Genres (Moved to Top) */}
+              {/* ROW 1: Similar Genres */}
               {recs.similar.length > 0 && (
                 <div className="mb-8">
                   <h4 className="text-xs font-bold text-brand-accent uppercase tracking-widest mb-3 flex items-center gap-2">
@@ -205,7 +362,8 @@ const MovieModal = ({ movie, onClose }) => {
                     {recs.similar.map((rec) => (
                       <div
                         key={rec.id}
-                        className="min-w-[160px] max-w-[160px] bg-zinc-900 rounded-xl p-3 border border-zinc-800 snap-start flex-shrink-0 hover:border-brand-accent transition-colors flex flex-col"
+                        onClick={() => onMovieSelect(rec)}
+                        className="min-w-[160px] max-w-[160px] bg-zinc-900 rounded-xl p-3 border border-zinc-800 snap-start flex-shrink-0 hover:border-brand-accent transition-colors flex flex-col cursor-pointer"
                       >
                         <div className="h-28 bg-zinc-800 rounded-lg mb-3 relative">
                           <span className="absolute top-2 left-2 text-[8px] font-black bg-white/20 backdrop-blur-md px-1.5 py-0.5 rounded text-white uppercase tracking-wider">
@@ -221,7 +379,6 @@ const MovieModal = ({ movie, onClose }) => {
                         >
                           {rec.title}
                         </h5>
-                        {/* Highlights the Genre */}
                         <p className="text-[10px] text-zinc-500 font-medium line-clamp-1 uppercase tracking-wider">
                           {rec.genres?.join(", ") || "N/A"}
                         </p>
@@ -241,7 +398,8 @@ const MovieModal = ({ movie, onClose }) => {
                     {recs.director.map((rec) => (
                       <div
                         key={rec.id}
-                        className="min-w-[160px] max-w-[160px] bg-zinc-900 rounded-xl p-3 border border-zinc-800 snap-start flex-shrink-0 hover:border-brand-accent transition-colors flex flex-col"
+                        onClick={() => onMovieSelect(rec)}
+                        className="min-w-[160px] max-w-[160px] bg-zinc-900 rounded-xl p-3 border border-zinc-800 snap-start flex-shrink-0 hover:border-brand-accent transition-colors flex flex-col cursor-pointer"
                       >
                         <div className="h-28 bg-zinc-800 rounded-lg mb-3 relative">
                           <span className="absolute top-2 left-2 text-[8px] font-black bg-white/20 backdrop-blur-md px-1.5 py-0.5 rounded text-white uppercase tracking-wider">
@@ -257,7 +415,6 @@ const MovieModal = ({ movie, onClose }) => {
                         >
                           {rec.title}
                         </h5>
-                        {/* Highlights the Director */}
                         <p className="text-[10px] text-zinc-500 font-medium line-clamp-1">
                           Dir. {rec.directors?.join(", ") || "N/A"}
                         </p>
@@ -277,7 +434,8 @@ const MovieModal = ({ movie, onClose }) => {
                     {recs.cast.map((rec) => (
                       <div
                         key={rec.id}
-                        className="min-w-[160px] max-w-[160px] bg-zinc-900 rounded-xl p-3 border border-zinc-800 snap-start flex-shrink-0 hover:border-brand-accent transition-colors flex flex-col"
+                        onClick={() => onMovieSelect(rec)}
+                        className="min-w-[160px] max-w-[160px] bg-zinc-900 rounded-xl p-3 border border-zinc-800 snap-start flex-shrink-0 hover:border-brand-accent transition-colors flex flex-col cursor-pointer"
                       >
                         <div className="h-28 bg-zinc-800 rounded-lg mb-3 relative">
                           <span className="absolute top-2 left-2 text-[8px] font-black bg-white/20 backdrop-blur-md px-1.5 py-0.5 rounded text-white uppercase tracking-wider">
@@ -293,7 +451,6 @@ const MovieModal = ({ movie, onClose }) => {
                         >
                           {rec.title}
                         </h5>
-                        {/* Highlights the Cast */}
                         <p className="text-[10px] text-zinc-500 font-medium line-clamp-1">
                           {rec.actors?.join(", ") || "N/A"}
                         </p>
