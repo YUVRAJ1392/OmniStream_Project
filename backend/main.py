@@ -7,11 +7,34 @@ from sqlalchemy.orm import Session, joinedload
 from datetime import datetime, timedelta
 from typing import Optional
 import random
-
-# Import your local files
+import joblib
+import os
 import models
 import schemas
 from database import engine, SessionLocal
+
+# 1. Load Hit/Flop AI (Only need to do this once!)
+if os.path.exists("omnistream_model.pkl"):
+    ai_model = joblib.load("omnistream_model.pkl")
+    print("🧠 Hit/Flop Predictor Loaded!")
+else:
+    ai_model = None
+
+# 2. Load the Hybrid Recommendation AI
+try:
+    rec_nn = joblib.load("recommender_nn.pkl")
+    rec_map_data = joblib.load("recommender_map.pkl")
+    rec_matrix = joblib.load("recommender_matrix.pkl")
+    
+    # Extract the two dictionaries to prevent Data Collisions!
+    id_to_idx = rec_map_data.get("id_to_idx", {})
+    idx_to_id = rec_map_data.get("idx_to_id", {})
+    
+    print("🕸️ NLP Recommendation Engine Loaded!")
+except Exception as e:
+    print(f"⚠️ Recommendation Engine Offline. Run train_recommender.py. Error: {e}")
+    rec_nn, id_to_idx, idx_to_id, rec_matrix = None, None, None, None
+
 
 # 1. Ensure all database tables are created
 models.Base.metadata.create_all(bind=engine)
@@ -22,10 +45,10 @@ app = FastAPI(title="OmniStream AI Backend", version="1.0")
 # Allow the React frontend to communicate with this backend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=["http://localhost:5173"], # Allows your React app
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"], # Allows all methods (GET, POST, etc.)
+    allow_headers=["*"], # Allows all headers
 )
 
 # --- DATABASE CONNECTION TUNNEL ---
@@ -169,16 +192,39 @@ def get_movies(
 
 @app.post("/api/predict")
 def predict_hit_flop(movie: schemas.MoviePredictionRequest):
-    ai_score = (movie.popularity * 10) + (movie.vote_count / 100) + (movie.budget / 1000000)
-    confidence = random.randint(75, 98) 
+    # 1. THE STREAMING / TV SHOW FALLBACK
+    # If there is no budget, we can't use the financial ML model. 
+    # Instead, we measure "Cultural Impact" based on popularity and votes.
+    if not movie.budget or movie.budget < 1000:
+        impact_score = (movie.popularity * 10) + movie.vote_count
+        confidence = random.randint(85, 95) # High confidence based on engagement metrics
+        
+        if impact_score > 5000:
+            return {"prediction": "Global Phenomenon 🌍", "confidence": confidence}
+        elif impact_score > 1000:
+            return {"prediction": "Cult Classic 📺", "confidence": confidence}
+        else:
+            return {"prediction": "Niche Audience 👤", "confidence": confidence}
+
+    # 2. THE THEATRICAL ML MODEL
+    # If it has a budget, pass it to our trained Scikit-Learn brain!
+    if ai_model is None:
+        return {"prediction": "AI Offline", "confidence": 0}
+        
+    features = [[movie.budget, movie.popularity, movie.vote_count]]
+    prediction_class = ai_model.predict(features)[0]
     
-    if ai_score > 600:
-        return {"prediction": "Blockbuster Hit 🚀", "confidence": confidence}
-    elif ai_score > 300:
-        return {"prediction": "Moderate Success 📈", "confidence": confidence}
+    probabilities = ai_model.predict_proba(features)[0]
+    confidence = int(max(probabilities) * 100)
+    
+    if prediction_class == 2:
+        result_text = "Blockbuster Hit 🚀"
+    elif prediction_class == 1:
+        result_text = "Moderate Success 📈"
     else:
-        return {"prediction": "High Risk / Flop 📉", "confidence": confidence}
-    
+        result_text = "High Risk / Flop 📉"
+        
+    return {"prediction": result_text, "confidence": confidence}    
 
 @app.get("/api/movies/{movie_id}/recommendations")
 def get_recommendations(movie_id: int, db: Session = Depends(get_db)):
@@ -191,9 +237,9 @@ def get_recommendations(movie_id: int, db: Session = Depends(get_db)):
     if not target_movie:
         return {"error": "Movie not found"}
 
+    # 1. EXACT SQL MATCHING (The Director's Cut & Familiar Faces)
     director_names = [d.name for d in target_movie.directors]
     actor_names = [a.name for a in target_movie.actors]
-    genre_names = [g.name for g in target_movie.genres]
 
     director_matches = []
     if director_names:
@@ -207,15 +253,47 @@ def get_recommendations(movie_id: int, db: Session = Depends(get_db)):
         cast_matches = db.query(models.Movie).join(models.Movie.actors).filter(
             models.Actor.name.in_(actor_names),
             models.Movie.id != movie_id
-        ).limit(8).all()
+        ).order_by(models.Movie.rating.desc()).limit(8).all()
 
+    # 2. MACHINE LEARNING NLP MATCHING (Similar Vibes)
     similar_matches = []
-    if genre_names:
+    
+    # NEW: Check id_to_idx instead of rec_map
+    if rec_nn is not None and rec_matrix is not None and id_to_idx and movie_id in id_to_idx:
+        # Use the first dictionary to get the matrix row
+        matrix_idx = id_to_idx[movie_id]
+        movie_vector = rec_matrix[matrix_idx]
+        
+        distances, indices = rec_nn.kneighbors(movie_vector, n_neighbors=9)
+        
+        recommended_ids = []
+        for i in range(1, len(indices[0])):
+            match_idx = indices[0][i]
+            # Use the second dictionary to convert the matrix row back to a database ID
+            match_db_id = idx_to_id[match_idx]
+            
+            if match_db_id != movie_id:
+                recommended_ids.append(match_db_id)
+                
+        if recommended_ids:
+            ordering = {id: index for index, id in enumerate(recommended_ids)}
+            unsorted = db.query(models.Movie).options(
+                joinedload(models.Movie.genres),
+                joinedload(models.Movie.directors),
+                joinedload(models.Movie.actors)
+            ).filter(models.Movie.id.in_(recommended_ids)).all()
+            
+            similar_matches = sorted(unsorted, key=lambda m: ordering[m.id])
+
+    # 3. FALLBACK (If AI fails, use basic SQL Genres)
+    if not similar_matches and target_movie.genres:
+        genre_names = [g.name for g in target_movie.genres]
         similar_matches = db.query(models.Movie).join(models.Movie.genres).filter(
             models.Genre.name.in_(genre_names),
             models.Movie.id != movie_id
         ).limit(8).all()
 
+    # Formatter for the UI
     def format_mini_card(m):
         return {
             "id": m.id,
@@ -233,7 +311,6 @@ def get_recommendations(movie_id: int, db: Session = Depends(get_db)):
         "cast": [format_mini_card(m) for m in cast_matches],
         "similar": [format_mini_card(m) for m in similar_matches]
     }
-
 
 # --- NEW: USER FEATURES & PROFILE ---
 
