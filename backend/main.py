@@ -2,47 +2,44 @@ from passlib.context import CryptContext
 from jose import jwt, JWTError
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials # <-- NEW: For checking tokens
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session, joinedload
 from datetime import datetime, timedelta
 from typing import Optional
 import random
 import joblib
 import os
+from transformers import pipeline
+
 import models
 import schemas
 from database import engine, SessionLocal
-import nltk
-from nltk.sentiment.vader import SentimentIntensityAnalyzer
-import re
-from transformers import pipeline
 
-# --- LOAD THE AI NLP BRAIN ---
-# This will download a ~250MB model the first time you run it, then keep it in memory
+# ==========================================
+# --- LOAD AI MODELS & BRAINS ---
+# ==========================================
+
+# 1. Deep Learning Sentiment Transformer
 print("🧠 Booting up Deep Learning Sentiment Transformer...")
 sentiment_pipeline = pipeline(
     "sentiment-analysis", 
     model="distilbert-base-uncased-finetuned-sst-2-english"
 )
 
-# Download the VADER dictionary (it will only do this once)
-nltk.download('vader_lexicon', quiet=True)
-sia = SentimentIntensityAnalyzer()
-
-# 1. Load Hit/Flop AI (Only need to do this once!)
+# 2. Hit/Flop Predictor
 if os.path.exists("omnistream_model.pkl"):
     ai_model = joblib.load("omnistream_model.pkl")
     print("🧠 Hit/Flop Predictor Loaded!")
 else:
     ai_model = None
 
-# 2. Load the Hybrid Recommendation AI
+# 3. Hybrid Recommendation AI
 try:
     rec_nn = joblib.load("recommender_nn.pkl")
     rec_map_data = joblib.load("recommender_map.pkl")
     rec_matrix = joblib.load("recommender_matrix.pkl")
     
-    # Extract the two dictionaries to prevent Data Collisions!
+    # Extract the two dictionaries to prevent Data Collisions
     id_to_idx = rec_map_data.get("id_to_idx", {})
     idx_to_id = rec_map_data.get("idx_to_id", {})
     
@@ -51,23 +48,22 @@ except Exception as e:
     print(f"⚠️ Recommendation Engine Offline. Run train_recommender.py. Error: {e}")
     rec_nn, id_to_idx, idx_to_id, rec_matrix = None, None, None, None
 
+# ==========================================
+# --- APP INITIALIZATION & DATABASE ---
+# ==========================================
 
-# 1. Ensure all database tables are created
 models.Base.metadata.create_all(bind=engine)
 
-# 2. Initialize the API
 app = FastAPI(title="OmniStream AI Backend", version="1.0")
 
-# Allow the React frontend to communicate with this backend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"], # Allows your React app
+    allow_origins=["http://localhost:5173"], 
     allow_credentials=True,
-    allow_methods=["*"], # Allows all methods (GET, POST, etc.)
-    allow_headers=["*"], # Allows all headers
+    allow_methods=["*"], 
+    allow_headers=["*"], 
 )
 
-# --- DATABASE CONNECTION TUNNEL ---
 def get_db():
     db = SessionLocal()
     try:
@@ -75,13 +71,16 @@ def get_db():
     finally:
         db.close()
 
+# ==========================================
 # --- SECURITY CONFIGURATION ---
-SECRET_KEY = "omnistream-super-secret-key" # Reminder: Move this to .env later!
+# ==========================================
+
+SECRET_KEY = "omnistream-super-secret-key" 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 1440 # 24 hours
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-security = HTTPBearer() # <-- NEW: Instructs FastAPI to look for a "Bearer" token in headers
+security = HTTPBearer() 
 
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
@@ -95,12 +94,7 @@ def create_access_token(data: dict):
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-# --- NEW: TOKEN VERIFIER (THE BOUNCER) ---
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)):
-    """
-    This function intercepts protected requests, decodes the JWT token, 
-    and returns the currently logged-in user.
-    """
     token = credentials.credentials
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
@@ -115,8 +109,9 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         raise HTTPException(status_code=401, detail="User not found")
     return user
 
-
+# ==========================================
 # --- AUTHENTICATION ENDPOINTS ---
+# ==========================================
 
 @app.post("/api/register")
 def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
@@ -147,8 +142,9 @@ def login_user(user: schemas.UserLogin, db: Session = Depends(get_db)):
     token = create_access_token(data={"sub": db_user.email})
     return {"access_token": token, "token_type": "bearer", "user_name": db_user.name}
 
-
+# ==========================================
 # --- MOVIE ENDPOINTS ---
+# ==========================================
 
 @app.get("/")
 def home():
@@ -203,17 +199,15 @@ def get_movies(
         })
     return results
 
-
+# ==========================================
 # --- MACHINE LEARNING PIPELINE ---
+# ==========================================
 
 @app.post("/api/predict")
 def predict_hit_flop(movie: schemas.MoviePredictionRequest):
-    # 1. THE STREAMING / TV SHOW FALLBACK
-    # If there is no budget, we can't use the financial ML model. 
-    # Instead, we measure "Cultural Impact" based on popularity and votes.
     if not movie.budget or movie.budget < 1000:
         impact_score = (movie.popularity * 10) + movie.vote_count
-        confidence = random.randint(85, 95) # High confidence based on engagement metrics
+        confidence = random.randint(85, 95) 
         
         if impact_score > 5000:
             return {"prediction": "Global Phenomenon 🌍", "confidence": confidence}
@@ -222,8 +216,6 @@ def predict_hit_flop(movie: schemas.MoviePredictionRequest):
         else:
             return {"prediction": "Niche Audience 👤", "confidence": confidence}
 
-    # 2. THE THEATRICAL ML MODEL
-    # If it has a budget, pass it to our trained Scikit-Learn brain!
     if ai_model is None:
         return {"prediction": "AI Offline", "confidence": 0}
         
@@ -253,7 +245,6 @@ def get_recommendations(movie_id: int, db: Session = Depends(get_db)):
     if not target_movie:
         return {"error": "Movie not found"}
 
-    # 1. EXACT SQL MATCHING (The Director's Cut & Familiar Faces)
     director_names = [d.name for d in target_movie.directors]
     actor_names = [a.name for a in target_movie.actors]
 
@@ -271,25 +262,13 @@ def get_recommendations(movie_id: int, db: Session = Depends(get_db)):
             models.Movie.id != movie_id
         ).order_by(models.Movie.rating.desc()).limit(8).all()
 
-    # 2. MACHINE LEARNING NLP MATCHING (Similar Vibes)
     similar_matches = []
-    
-    # NEW: Check id_to_idx instead of rec_map
     if rec_nn is not None and rec_matrix is not None and id_to_idx and movie_id in id_to_idx:
-        # Use the first dictionary to get the matrix row
         matrix_idx = id_to_idx[movie_id]
         movie_vector = rec_matrix[matrix_idx]
-        
         distances, indices = rec_nn.kneighbors(movie_vector, n_neighbors=9)
         
-        recommended_ids = []
-        for i in range(1, len(indices[0])):
-            match_idx = indices[0][i]
-            # Use the second dictionary to convert the matrix row back to a database ID
-            match_db_id = idx_to_id[match_idx]
-            
-            if match_db_id != movie_id:
-                recommended_ids.append(match_db_id)
+        recommended_ids = [idx_to_id[indices[0][i]] for i in range(1, len(indices[0])) if idx_to_id[indices[0][i]] != movie_id]
                 
         if recommended_ids:
             ordering = {id: index for index, id in enumerate(recommended_ids)}
@@ -298,10 +277,8 @@ def get_recommendations(movie_id: int, db: Session = Depends(get_db)):
                 joinedload(models.Movie.directors),
                 joinedload(models.Movie.actors)
             ).filter(models.Movie.id.in_(recommended_ids)).all()
-            
             similar_matches = sorted(unsorted, key=lambda m: ordering[m.id])
 
-    # 3. FALLBACK (If AI fails, use basic SQL Genres)
     if not similar_matches and target_movie.genres:
         genre_names = [g.name for g in target_movie.genres]
         similar_matches = db.query(models.Movie).join(models.Movie.genres).filter(
@@ -309,7 +286,6 @@ def get_recommendations(movie_id: int, db: Session = Depends(get_db)):
             models.Movie.id != movie_id
         ).limit(8).all()
 
-    # Formatter for the UI
     def format_mini_card(m):
         return {
             "id": m.id,
@@ -328,32 +304,24 @@ def get_recommendations(movie_id: int, db: Session = Depends(get_db)):
         "similar": [format_mini_card(m) for m in similar_matches]
     }
 
-# --- NEW: USER FEATURES & PROFILE ---
+# ==========================================
+# --- USER FEATURES & PROFILE ---
+# ==========================================
 
 @app.delete("/api/reviews/{review_id}")
 def delete_review(review_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Deletes a specific review, but only if the logged-in user owns it."""
-    
-    # 1. Find the review in the database
     review = db.query(models.Review).filter(models.Review.id == review_id).first()
-    
-    # 2. Check if it exists
     if not review:
         raise HTTPException(status_code=404, detail="Review not found")
-        
-    # 3. SECURITY CHECK: Ensure the user trying to delete it is the author
     if review.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to delete this review")
         
-    # 4. Delete and commit
     db.delete(review)
     db.commit()
-    
     return {"message": "Review deleted successfully"}
 
 @app.post("/api/movies/{movie_id}/like")
 def toggle_like_movie(movie_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Toggle a movie in the user's liked list."""
     movie = db.query(models.Movie).filter(models.Movie.id == movie_id).first()
     if not movie:
         raise HTTPException(status_code=404, detail="Movie not found")
@@ -370,7 +338,6 @@ def toggle_like_movie(movie_id: int, db: Session = Depends(get_db), current_user
 
 @app.post("/api/movies/{movie_id}/watch-later")
 def toggle_watch_later(movie_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Toggle a movie in the user's watch later list."""
     movie = db.query(models.Movie).filter(models.Movie.id == movie_id).first()
     if not movie:
         raise HTTPException(status_code=404, detail="Movie not found")
@@ -387,12 +354,10 @@ def toggle_watch_later(movie_id: int, db: Session = Depends(get_db), current_use
 
 @app.post("/api/movies/{movie_id}/reviews", response_model=schemas.ReviewResponse)
 def create_review(movie_id: int, review: schemas.ReviewCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Allow a user to post a review for a movie."""
     movie = db.query(models.Movie).filter(models.Movie.id == movie_id).first()
     if not movie:
         raise HTTPException(status_code=404, detail="Movie not found")
         
-    # Create the new review in the database
     new_review = models.Review(
         content=review.content,
         rating=review.rating,
@@ -403,17 +368,11 @@ def create_review(movie_id: int, review: schemas.ReviewCreate, db: Session = Dep
     db.add(new_review)
     db.commit()
     db.refresh(new_review)
-    
-    # Attach the author's name manually for the response schema
     new_review.author_name = current_user.name 
     return new_review
 
 @app.get("/api/movies/{movie_id}/reviews")
 def get_movie_reviews(movie_id: int, db: Session = Depends(get_db)):
-    """
-    Fetches all reviews for a movie and performs live NLP sentiment analysis.
-    """
-    # Fetch all reviews for this movie from the database (newest first)
     reviews = db.query(models.Review).filter(models.Review.movie_id == movie_id).order_by(models.Review.id.desc()).all()
 
     if not reviews:
@@ -424,12 +383,10 @@ def get_movie_reviews(movie_id: int, db: Session = Depends(get_db)):
 
     for r in reviews:
         try:
-            # 1. Run the Transformer AI
             ai_result = sentiment_pipeline(r.content)[0]
-            label = ai_result['label'] # 'POSITIVE' or 'NEGATIVE'
-            confidence = ai_result['score'] # A float between 0.0 and 1.0
+            label = ai_result['label'] 
+            confidence = ai_result['score'] 
 
-            # 2. Keep the math for the overall score, but set text for the badge
             if label == 'POSITIVE':
                 compound_score = confidence
                 sentiment_badge = "POSITIVE 😊"
@@ -445,24 +402,19 @@ def get_movie_reviews(movie_id: int, db: Session = Depends(get_db)):
             sentiment_badge = "NEUTRAL 😐"
             color = "zinc"
 
-        # Secretly keep tracking the math so we can average it out later
         total_polarity += compound_score
-            
-        # Grab the user's name if the relationship exists
         author_name = r.user.name if hasattr(r, 'user') and r.user else f"U{r.user_id}"
 
-        # 3. Append to the review array
         review_data.append({
             "id": r.id,
             "content": r.content,
             "rating": r.rating,
             "user_id": r.user_id, 
             "author_name": author_name,
-            "sentiment_badge": sentiment_badge, # This will now say POSITIVE 😊 or NEGATIVE 😡
+            "sentiment_badge": sentiment_badge, 
             "color": color
         })
 
-    # 4. Calculate the Overall Movie Sentiment Score (Keep this as a number!)
     if len(reviews) > 0:
         avg_polarity = total_polarity / len(reviews)
         overall_sentiment = f"{avg_polarity:+.2f} Avg"
@@ -476,12 +428,6 @@ def get_movie_reviews(movie_id: int, db: Session = Depends(get_db)):
 
 @app.get("/api/users/me", response_model=schemas.UserProfileResponse)
 def get_user_profile(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Fetch the currently logged in user's profile, including their lists and reviews."""
-    # current_user already has the liked_movies and watch_later_movies attached 
-    # thanks to SQLAlchemy relationships! We just return it directly.
-    
-    # We loop through reviews to attach the author name so the frontend can display it easily
     for review in current_user.reviews:
         review.author_name = current_user.name
-        
     return current_user

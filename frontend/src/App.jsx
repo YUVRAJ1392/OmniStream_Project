@@ -9,9 +9,7 @@ function App() {
   // --- AUTHENTICATION STATE ---
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [userName, setUserName] = useState("");
-
-  // NEW: State to toggle between the main app and the user profile
-  const [view, setView] = useState("home"); // can be "home" or "profile"
+  const [view, setView] = useState("home"); // "home" or "profile"
 
   // Check browser memory on first load
   useEffect(() => {
@@ -31,8 +29,7 @@ function App() {
   const handleLogout = () => {
     localStorage.removeItem("omnistream_token");
     localStorage.removeItem("omnistream_user");
-    // Also clear the standard token we used in our api.js helper
-    localStorage.removeItem("token");
+    localStorage.removeItem("token"); // Clears the api.js helper token
     setIsAuthenticated(false);
     setUserName("");
     setView("home");
@@ -53,8 +50,24 @@ function App() {
   const [filterYear, setFilterYear] = useState("");
   const [showFilters, setShowFilters] = useState(false);
 
-  const buildFetchUrl = (currentLimit, currentSkip) => {
-    let url = `http://localhost:8000/api/movies?limit=${currentLimit}&skip=${currentSkip}`;
+  // --- DERIVED STATE (DRY Cleanup) ---
+  const hasActiveFilters = filterType || filterGenre || filterYear;
+  const isFiltering = searchInput || hasActiveFilters;
+  const currentLimit = isFiltering ? 100 : 12;
+
+  const availableGenres = [
+    "Action",
+    "Sci-Fi",
+    "Comedy",
+    "Drama",
+    "Horror",
+    "Romance",
+    "Thriller",
+  ];
+  const availableYears = ["2024", "2023", "2022", "2021", "2020", "2019"];
+
+  const buildFetchUrl = (limit, currentSkip) => {
+    let url = `http://localhost:8000/api/movies?limit=${limit}&skip=${currentSkip}`;
     if (searchInput) url += `&search=${searchInput}`;
     if (filterType) url += `&type=${filterType}`;
     if (filterGenre) url += `&genre=${filterGenre}`;
@@ -62,6 +75,14 @@ function App() {
     return url;
   };
 
+  const clearFilters = () => {
+    setFilterType("");
+    setFilterGenre("");
+    setFilterYear("");
+    setShowFilters(false);
+  };
+
+  // Main Fetch Effect
   useEffect(() => {
     if (!isAuthenticated) return;
 
@@ -70,8 +91,6 @@ function App() {
 
     const delayDebounceFn = setTimeout(() => {
       setLoading(true);
-      const currentLimit =
-        searchInput || filterType || filterGenre || filterYear ? 100 : 12;
 
       fetch(buildFetchUrl(currentLimit, 0))
         .then((response) => response.json())
@@ -91,8 +110,6 @@ function App() {
 
   const loadMoreMovies = () => {
     setLoadingMore(true);
-    const currentLimit =
-      searchInput || filterType || filterGenre || filterYear ? 100 : 12;
     const nextSkip = skip + currentLimit;
 
     fetch(buildFetchUrl(currentLimit, nextSkip))
@@ -109,32 +126,22 @@ function App() {
       });
   };
 
-  const hasActiveFilters = filterType || filterGenre || filterYear;
-  const availableGenres = [
-    "Action",
-    "Sci-Fi",
-    "Comedy",
-    "Drama",
-    "Horror",
-    "Romance",
-    "Thriller",
-  ];
-  const availableYears = ["2024", "2023", "2022", "2021", "2020", "2019"];
+  // --- USER SAVED DATA MEMORY ---
+  const [userSavedIds, setUserSavedIds] = useState({
+    liked: [],
+    watchLater: [],
+  });
 
-  // --- NEW: USER SAVED DATA MEMORY ---
-  const [userSavedIds, setUserSavedIds] = useState({ liked: [], watchLater: [] });
-
-  // When the user logs in, fetch their profile and remember the IDs of movies they liked
   useEffect(() => {
     if (isAuthenticated) {
-      fetchWithAuth('/users/me')
-        .then(data => {
+      fetchWithAuth("/users/me")
+        .then((data) => {
           setUserSavedIds({
-            liked: data.liked_movies.map(m => m.id),
-            watchLater: data.watch_later_movies.map(m => m.id)
+            liked: data.liked_movies.map((m) => m.id),
+            watchLater: data.watch_later_movies.map((m) => m.id),
           });
         })
-        .catch(err => console.error("Could not fetch user saved lists", err));
+        .catch((err) => console.error("Could not fetch user saved lists", err));
     }
   }, [isAuthenticated]);
 
@@ -149,7 +156,6 @@ function App() {
       {/* GLOBAL NAVIGATION BAR */}
       <nav className="bg-black/80 backdrop-blur-xl border-b border-white/5 py-4 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-6 flex justify-between items-center">
-          {/* Clicking the logo returns you to home */}
           <h1
             onClick={() => setView("home")}
             className="text-3xl font-black tracking-tighter text-white cursor-pointer hover:opacity-80 transition-opacity"
@@ -165,7 +171,6 @@ function App() {
               </span>
             </span>
 
-            {/* NEW: View Toggle Button */}
             <button
               onClick={() => setView(view === "home" ? "profile" : "home")}
               className="text-[10px] font-black text-white uppercase tracking-widest bg-zinc-800 hover:bg-zinc-700 px-3 py-1.5 rounded-full transition-all"
@@ -185,10 +190,8 @@ function App() {
 
       {/* --- DYNAMIC VIEW RENDERING --- */}
       {view === "profile" ? (
-        // NEW: Passed the setSelectedMovie function down as a prop
         <UserProfile onMovieClick={setSelectedMovie} />
       ) : (
-        // Render the Standard Home Component
         <main className="max-w-7xl mx-auto px-6 py-12 animate-fade-in">
           <div className="mb-12 text-center max-w-4xl mx-auto">
             <h2 className="text-5xl font-black text-white mb-8 tracking-tight">
@@ -331,12 +334,7 @@ function App() {
 
                     {hasActiveFilters && (
                       <button
-                        onClick={() => {
-                          setFilterType("");
-                          setFilterGenre("");
-                          setFilterYear("");
-                          setShowFilters(false);
-                        }}
+                        onClick={clearFilters}
                         className="w-full mt-6 bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-bold uppercase tracking-widest py-3 rounded-xl transition-colors"
                       >
                         Clear Filters
@@ -347,7 +345,8 @@ function App() {
               </div>
             </div>
 
-            {(searchInput || filterType || filterGenre || filterYear) && (
+            {/* THE ACTIVE FILTER PILLS */}
+            {isFiltering && (
               <div className="flex flex-wrap justify-center gap-2 mt-6">
                 {filterType && (
                   <span className="text-[10px] font-black uppercase tracking-widest bg-blue-500/20 text-blue-400 px-3 py-1.5 rounded-full border border-blue-500/30 flex items-center gap-2 shadow-lg">
@@ -388,9 +387,7 @@ function App() {
 
           <div className="mb-8 flex items-center justify-between border-b border-zinc-800 pb-4">
             <h3 className="text-xl font-bold text-white uppercase tracking-wider">
-              {searchInput || filterType || filterGenre || filterYear
-                ? "Filtered Results"
-                : "Trending Catalog"}
+              {isFiltering ? "Filtered Results" : "Trending Catalog"}
             </h3>
             <span className="text-sm font-bold text-zinc-500 bg-zinc-900 px-3 py-1 rounded-full">
               {movies.length} Loaded
@@ -446,7 +443,6 @@ function App() {
         </main>
       )}
 
-      {/* NEW LOCATION: Modal is now down here, outside the main view logic! */}
       {selectedMovie && (
         <MovieModal
           movie={selectedMovie}

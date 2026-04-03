@@ -1,6 +1,17 @@
 import React, { useState, useEffect } from "react";
 import { fetchWithAuth } from "../utils/api";
 
+// --- NEW HELPER COMPONENT (DRY Principle) ---
+const ProfileMovieItem = ({ movie, onClick, hoverColorClass, badgeNode }) => (
+  <div
+    onClick={() => onClick(movie)}
+    className={`bg-black/40 border border-zinc-800/50 p-4 rounded-xl flex justify-between items-center transition-colors cursor-pointer ${hoverColorClass}`}
+  >
+    <span className="font-bold text-sm truncate pr-4">{movie.title}</span>
+    {badgeNode}
+  </div>
+);
+
 const UserProfile = ({ onMovieClick }) => {
   const [profile, setProfile] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -26,18 +37,14 @@ const UserProfile = ({ onMovieClick }) => {
     window.location.href = "/login"; // Redirect to login page
   };
 
-  // --- NEW: THE DELETE HANDLER ---
   const handleDeleteReview = async (reviewId) => {
-    // 1. Ask for confirmation
     if (!window.confirm("Are you sure you want to delete this review?")) return;
 
     try {
-      // 2. Tell the backend to delete it
       await fetchWithAuth(`/reviews/${reviewId}`, {
         method: "DELETE",
       });
 
-      // 3. Update the React state instantly (Optimistic UI)
       setProfile((prevProfile) => ({
         ...prevProfile,
         reviews: prevProfile.reviews.filter((review) => review.id !== reviewId),
@@ -77,7 +84,6 @@ const UserProfile = ({ onMovieClick }) => {
       <div className="max-w-6xl mx-auto space-y-12">
         {/* --- HEADER SECTION --- */}
         <div className="bg-gradient-to-r from-zinc-900 to-black border border-zinc-800 rounded-3xl p-8 sm:p-12 flex flex-col sm:flex-row items-center justify-between gap-6 shadow-2xl relative overflow-hidden">
-          {/* Decorative background glow */}
           <div className="absolute top-0 right-0 w-64 h-64 bg-brand-accent/5 rounded-full blur-3xl -z-10"></div>
 
           <div className="flex items-center gap-6">
@@ -104,7 +110,7 @@ const UserProfile = ({ onMovieClick }) => {
 
         {/* --- CONTENT GRID --- */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* LIKED MOVIES */}
+          {/* LIKED MOVIES (Optimized Mapping) */}
           <div className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6 sm:p-8">
             <h2 className="text-xl font-black mb-6 flex items-center gap-3">
               <span className="text-red-500">❤️</span> Liked Transmissions
@@ -114,24 +120,23 @@ const UserProfile = ({ onMovieClick }) => {
             ) : (
               <div className="space-y-3">
                 {profile.liked_movies.map((movie) => (
-                  <div
+                  <ProfileMovieItem
                     key={movie.id}
-                    onClick={() => onMovieClick(movie)}
-                    className="bg-black/40 border border-zinc-800/50 p-4 rounded-xl flex justify-between items-center hover:border-brand-accent/50 transition-colors cursor-pointer"
-                  >
-                    <span className="font-bold text-sm truncate pr-4">
-                      {movie.title}
-                    </span>
-                    <span className="text-yellow-500 text-xs font-black bg-yellow-500/10 px-2 py-1 rounded">
-                      ★ {movie.rating ? movie.rating.toFixed(1) : "N/A"}
-                    </span>
-                  </div>
+                    movie={movie}
+                    onClick={onMovieClick}
+                    hoverColorClass="hover:border-brand-accent/50"
+                    badgeNode={
+                      <span className="text-yellow-500 text-xs font-black bg-yellow-500/10 px-2 py-1 rounded">
+                        ★ {movie.rating ? movie.rating.toFixed(1) : "N/A"}
+                      </span>
+                    }
+                  />
                 ))}
               </div>
             )}
           </div>
 
-          {/* WATCH LATER */}
+          {/* WATCH LATER (Optimized Mapping) */}
           <div className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6 sm:p-8">
             <h2 className="text-xl font-black mb-6 flex items-center gap-3">
               <span className="text-blue-500">🔖</span> Watch Later
@@ -141,24 +146,23 @@ const UserProfile = ({ onMovieClick }) => {
             ) : (
               <div className="space-y-3">
                 {profile.watch_later_movies.map((movie) => (
-                  <div
+                  <ProfileMovieItem
                     key={movie.id}
-                    onClick={() => onMovieClick(movie)}
-                    className="bg-black/40 border border-zinc-800/50 p-4 rounded-xl flex justify-between items-center hover:border-blue-500/50 transition-colors cursor-pointer"
-                  >
-                    <span className="font-bold text-sm truncate pr-4">
-                      {movie.title}
-                    </span>
-                    <span className="text-zinc-400 text-xs font-bold uppercase tracking-widest">
-                      Saved
-                    </span>
-                  </div>
+                    movie={movie}
+                    onClick={onMovieClick}
+                    hoverColorClass="hover:border-blue-500/50"
+                    badgeNode={
+                      <span className="text-zinc-400 text-xs font-bold uppercase tracking-widest">
+                        Saved
+                      </span>
+                    }
+                  />
                 ))}
               </div>
             )}
           </div>
 
-          {/* REVIEWS (Spans both columns on large screens) */}
+          {/* REVIEWS */}
           <div className="lg:col-span-2 bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6 sm:p-8">
             <h2 className="text-xl font-black mb-6 flex items-center gap-3">
               <span className="text-brand-accent">✍️</span> Your Reviews
@@ -187,7 +191,6 @@ const UserProfile = ({ onMovieClick }) => {
                       "{review.content}"
                     </p>
 
-                    {/* --- UPDATED: Footer with Date and Delete Button --- */}
                     <div className="flex justify-between items-center mt-auto pt-3 border-t border-zinc-800/50">
                       <span className="text-[10px] text-zinc-600 font-bold">
                         {new Date(review.created_at).toLocaleDateString()}

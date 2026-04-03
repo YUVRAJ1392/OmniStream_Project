@@ -1,7 +1,47 @@
 import React, { useState, useEffect } from "react";
 import { fetchWithAuth } from "../utils/api";
 
-// NEW: Accept the userSavedIds prop
+// --- NEW HELPER COMPONENT (DRY Principle) ---
+// We extract the scrolling row UI so we don't copy-paste it 3 times!
+const RecommendationRow = ({ title, icon, data, subtitleFn, onSelect }) => {
+  if (!data || data.length === 0) return null;
+
+  return (
+    <div className="mb-8">
+      <h4 className="text-xs font-bold text-brand-accent uppercase tracking-widest mb-3 flex items-center gap-2">
+        {icon} {title}
+      </h4>
+      <div className="flex gap-4 overflow-x-auto pb-4 custom-scrollbar snap-x">
+        {data.map((rec) => (
+          <div
+            key={rec.id}
+            onClick={() => onSelect(rec)}
+            className="min-w-[160px] max-w-[160px] bg-zinc-900 rounded-xl p-3 border border-zinc-800 snap-start flex-shrink-0 hover:border-brand-accent transition-colors flex flex-col cursor-pointer"
+          >
+            <div className="h-28 bg-zinc-800 rounded-lg mb-3 relative">
+              <span className="absolute top-2 left-2 text-[8px] font-black bg-white/20 backdrop-blur-md px-1.5 py-0.5 rounded text-white uppercase tracking-wider">
+                {rec.type}
+              </span>
+              <span className="absolute bottom-2 right-2 text-[9px] font-black bg-black/80 px-1.5 py-0.5 rounded text-white">
+                {rec.release_year}
+              </span>
+            </div>
+            <h5
+              className="text-white text-sm font-bold line-clamp-1 mb-1"
+              title={rec.title}
+            >
+              {rec.title}
+            </h5>
+            <p className="text-[10px] text-zinc-500 font-medium line-clamp-1 uppercase tracking-wider">
+              {subtitleFn(rec)}
+            </p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 const MovieModal = ({ movie, onClose, onMovieSelect, userSavedIds }) => {
   const [prediction, setPrediction] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -20,11 +60,11 @@ const MovieModal = ({ movie, onClose, onMovieSelect, userSavedIds }) => {
   });
   const [loadingReviews, setLoadingReviews] = useState(true);
 
-  // --- NEW: Action Button State ---
+  // Action Button State
   const [isLiked, setIsLiked] = useState(false);
   const [inWatchLater, setInWatchLater] = useState(false);
 
-  // --- NEW: Sync the buttons with the database memory ---
+  // Sync the buttons with the database memory
   useEffect(() => {
     if (userSavedIds && movie) {
       setIsLiked(userSavedIds.liked?.includes(movie.id) || false);
@@ -55,7 +95,6 @@ const MovieModal = ({ movie, onClose, onMovieSelect, userSavedIds }) => {
       })
       .catch((err) => console.error("Failed to load recommendations", err));
 
-    // --- NEW: Fetch Reviews & Sentiment Analysis ---
     setLoadingReviews(true);
     fetch(`http://localhost:8000/api/movies/${movie.id}/reviews`)
       .then((res) => res.json())
@@ -70,7 +109,6 @@ const MovieModal = ({ movie, onClose, onMovieSelect, userSavedIds }) => {
     if (e.target.id === "modal-backdrop") onClose();
   };
 
-  // --- NEW: Action Button Handlers ---
   const handleLike = async () => {
     try {
       await fetchWithAuth(`/movies/${movie.id}/like`, { method: "POST" });
@@ -131,7 +169,6 @@ const MovieModal = ({ movie, onClose, onMovieSelect, userSavedIds }) => {
       setReviewContent("");
       setReviewRating(0);
 
-      // --- UPGRADE: Instantly fetch the new reviews so the UI updates ---
       fetch(`http://localhost:8000/api/movies/${movie.id}/reviews`)
         .then((res) => res.json())
         .then((data) => setReviewsData(data));
@@ -254,7 +291,7 @@ const MovieModal = ({ movie, onClose, onMovieSelect, userSavedIds }) => {
             </p>
           </div>
 
-          {/* --- NEW: LARGE ACTION BUTTONS --- */}
+          {/* LARGE ACTION BUTTONS */}
           <div className="flex flex-col sm:flex-row gap-4 mt-8 pt-8 border-t border-zinc-800">
             <button
               onClick={handleLike}
@@ -430,120 +467,38 @@ const MovieModal = ({ movie, onClose, onMovieSelect, userSavedIds }) => {
             )}
           </div>
 
-          {/* THE 3 RECOMMENDATION ROWS */}
+          {/* THE 3 RECOMMENDATION ROWS (Now DRY and optimized!) */}
           {!loadingRecs && (
             <div className="mt-12 pt-8 border-t border-zinc-800">
               <h3 className="text-2xl font-black text-white mb-8">
                 Related Transmissions
               </h3>
 
-              {/* ROW 1: Similar Genres */}
-              {recs.similar.length > 0 && (
-                <div className="mb-8">
-                  <h4 className="text-xs font-bold text-brand-accent uppercase tracking-widest mb-3 flex items-center gap-2">
-                    📖 Similar Vibes
-                  </h4>
-                  <div className="flex gap-4 overflow-x-auto pb-4 custom-scrollbar snap-x">
-                    {recs.similar.map((rec) => (
-                      <div
-                        key={rec.id}
-                        onClick={() => onMovieSelect(rec)}
-                        className="min-w-[160px] max-w-[160px] bg-zinc-900 rounded-xl p-3 border border-zinc-800 snap-start flex-shrink-0 hover:border-brand-accent transition-colors flex flex-col cursor-pointer"
-                      >
-                        <div className="h-28 bg-zinc-800 rounded-lg mb-3 relative">
-                          <span className="absolute top-2 left-2 text-[8px] font-black bg-white/20 backdrop-blur-md px-1.5 py-0.5 rounded text-white uppercase tracking-wider">
-                            {rec.type}
-                          </span>
-                          <span className="absolute bottom-2 right-2 text-[9px] font-black bg-black/80 px-1.5 py-0.5 rounded text-white">
-                            {rec.release_year}
-                          </span>
-                        </div>
-                        <h5
-                          className="text-white text-sm font-bold line-clamp-1 mb-1"
-                          title={rec.title}
-                        >
-                          {rec.title}
-                        </h5>
-                        <p className="text-[10px] text-zinc-500 font-medium line-clamp-1 uppercase tracking-wider">
-                          {rec.genres?.join(", ") || "N/A"}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+              <RecommendationRow
+                title="Similar Vibes"
+                icon="📖"
+                data={recs.similar}
+                onSelect={onMovieSelect}
+                subtitleFn={(rec) => rec.genres?.join(", ") || "N/A"}
+              />
 
-              {/* ROW 2: Director */}
-              {recs.director.length > 0 && (
-                <div className="mb-8">
-                  <h4 className="text-xs font-bold text-brand-accent uppercase tracking-widest mb-3 flex items-center gap-2">
-                    🎬 The Director's Cut
-                  </h4>
-                  <div className="flex gap-4 overflow-x-auto pb-4 custom-scrollbar snap-x">
-                    {recs.director.map((rec) => (
-                      <div
-                        key={rec.id}
-                        onClick={() => onMovieSelect(rec)}
-                        className="min-w-[160px] max-w-[160px] bg-zinc-900 rounded-xl p-3 border border-zinc-800 snap-start flex-shrink-0 hover:border-brand-accent transition-colors flex flex-col cursor-pointer"
-                      >
-                        <div className="h-28 bg-zinc-800 rounded-lg mb-3 relative">
-                          <span className="absolute top-2 left-2 text-[8px] font-black bg-white/20 backdrop-blur-md px-1.5 py-0.5 rounded text-white uppercase tracking-wider">
-                            {rec.type}
-                          </span>
-                          <span className="absolute bottom-2 right-2 text-[9px] font-black bg-black/80 px-1.5 py-0.5 rounded text-white">
-                            {rec.release_year}
-                          </span>
-                        </div>
-                        <h5
-                          className="text-white text-sm font-bold line-clamp-1 mb-1"
-                          title={rec.title}
-                        >
-                          {rec.title}
-                        </h5>
-                        <p className="text-[10px] text-zinc-500 font-medium line-clamp-1">
-                          Dir. {rec.directors?.join(", ") || "N/A"}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+              <RecommendationRow
+                title="The Director's Cut"
+                icon="🎬"
+                data={recs.director}
+                onSelect={onMovieSelect}
+                subtitleFn={(rec) =>
+                  `Dir. ${rec.directors?.join(", ") || "N/A"}`
+                }
+              />
 
-              {/* ROW 3: Cast */}
-              {recs.cast.length > 0 && (
-                <div className="mb-4">
-                  <h4 className="text-xs font-bold text-brand-accent uppercase tracking-widest mb-3 flex items-center gap-2">
-                    🎭 Familiar Faces
-                  </h4>
-                  <div className="flex gap-4 overflow-x-auto pb-4 custom-scrollbar snap-x">
-                    {recs.cast.map((rec) => (
-                      <div
-                        key={rec.id}
-                        onClick={() => onMovieSelect(rec)}
-                        className="min-w-[160px] max-w-[160px] bg-zinc-900 rounded-xl p-3 border border-zinc-800 snap-start flex-shrink-0 hover:border-brand-accent transition-colors flex flex-col cursor-pointer"
-                      >
-                        <div className="h-28 bg-zinc-800 rounded-lg mb-3 relative">
-                          <span className="absolute top-2 left-2 text-[8px] font-black bg-white/20 backdrop-blur-md px-1.5 py-0.5 rounded text-white uppercase tracking-wider">
-                            {rec.type}
-                          </span>
-                          <span className="absolute bottom-2 right-2 text-[9px] font-black bg-black/80 px-1.5 py-0.5 rounded text-white">
-                            {rec.release_year}
-                          </span>
-                        </div>
-                        <h5
-                          className="text-white text-sm font-bold line-clamp-1 mb-1"
-                          title={rec.title}
-                        >
-                          {rec.title}
-                        </h5>
-                        <p className="text-[10px] text-zinc-500 font-medium line-clamp-1">
-                          {rec.actors?.join(", ") || "N/A"}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+              <RecommendationRow
+                title="Familiar Faces"
+                icon="🎭"
+                data={recs.cast}
+                onSelect={onMovieSelect}
+                subtitleFn={(rec) => rec.actors?.join(", ") || "N/A"}
+              />
             </div>
           )}
         </div>
