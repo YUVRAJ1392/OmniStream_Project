@@ -14,6 +14,11 @@ const MovieModal = ({ movie, onClose, onMovieSelect, userSavedIds }) => {
   const [reviewRating, setReviewRating] = useState(0);
   const [reviewStatus, setReviewStatus] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [reviewsData, setReviewsData] = useState({
+    overall_sentiment: "Loading...",
+    reviews: [],
+  });
+  const [loadingReviews, setLoadingReviews] = useState(true);
 
   // --- NEW: Action Button State ---
   const [isLiked, setIsLiked] = useState(false);
@@ -49,6 +54,16 @@ const MovieModal = ({ movie, onClose, onMovieSelect, userSavedIds }) => {
         setLoadingRecs(false);
       })
       .catch((err) => console.error("Failed to load recommendations", err));
+
+    // --- NEW: Fetch Reviews & Sentiment Analysis ---
+    setLoadingReviews(true);
+    fetch(`http://localhost:8000/api/movies/${movie.id}/reviews`)
+      .then((res) => res.json())
+      .then((data) => {
+        setReviewsData(data);
+        setLoadingReviews(false);
+      })
+      .catch((err) => console.error("Failed to load reviews", err));
   }, [movie]);
 
   const handleBackdropClick = (e) => {
@@ -115,6 +130,11 @@ const MovieModal = ({ movie, onClose, onMovieSelect, userSavedIds }) => {
       setReviewStatus({ type: "success", text: "Review posted successfully!" });
       setReviewContent("");
       setReviewRating(0);
+
+      // --- UPGRADE: Instantly fetch the new reviews so the UI updates ---
+      fetch(`http://localhost:8000/api/movies/${movie.id}/reviews`)
+        .then((res) => res.json())
+        .then((data) => setReviewsData(data));
     } catch (error) {
       setReviewStatus({
         type: "error",
@@ -343,6 +363,71 @@ const MovieModal = ({ movie, onClose, onMovieSelect, userSavedIds }) => {
                 </button>
               </div>
             </div>
+          </div>
+
+          {/* COMMUNITY SENTIMENT & REVIEWS SECTION */}
+          <div className="mt-8 pt-8 border-t border-zinc-800">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-black text-white">Community Pulse</h3>
+              {!loadingReviews && reviewsData.reviews.length > 0 && (
+                <div className="bg-brand-accent/20 border border-brand-accent/50 px-4 py-1.5 rounded-full flex items-center gap-2">
+                  <span className="text-[10px] text-brand-accent uppercase tracking-widest font-black">
+                    Overall Sentiment:
+                  </span>
+                  <span className="text-sm font-bold text-white">
+                    {reviewsData.overall_sentiment}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {loadingReviews ? (
+              <p className="text-sm text-zinc-500">
+                Analyzing community sentiment...
+              </p>
+            ) : reviewsData.reviews.length === 0 ? (
+              <p className="text-sm text-zinc-500 bg-zinc-900/50 p-6 rounded-xl border border-zinc-800/50 text-center">
+                No transmissions found. Be the first to leave a review!
+              </p>
+            ) : (
+              <div className="space-y-4 max-h-[400px] overflow-y-auto custom-scrollbar pr-2">
+                {reviewsData.reviews.map((rev) => (
+                  <div
+                    key={rev.id}
+                    className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl relative overflow-hidden group hover:border-zinc-700 transition-colors"
+                  >
+                    {/* Header: Rating & NLP Badge */}
+                    <div className="flex justify-between items-start mb-3">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 bg-zinc-800 rounded-full flex items-center justify-center text-xs font-bold text-zinc-400 uppercase">
+                          {rev.author_name ? rev.author_name.charAt(0) : "U"}
+                        </div>
+                        <span className="text-yellow-500 text-sm font-black flex tracking-widest">
+                          {"★".repeat(rev.rating)}
+                          {"☆".repeat(5 - rev.rating)}
+                        </span>
+                      </div>
+
+                      {/* Individual Sentiment Badge */}
+                      <span
+                        className={`text-[10px] uppercase tracking-widest font-black px-2.5 py-1 rounded-full border 
+                        ${rev.color === "emerald" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : ""}
+                        ${rev.color === "red" ? "bg-red-500/10 text-red-400 border-red-500/20" : ""}
+                        ${rev.color === "zinc" ? "bg-zinc-800 text-zinc-400 border-zinc-700" : ""}
+                      `}
+                      >
+                        {rev.sentiment_badge}
+                      </span>
+                    </div>
+
+                    {/* The Comment */}
+                    <p className="text-sm text-zinc-300 leading-relaxed">
+                      "{rev.content}"
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* THE 3 RECOMMENDATION ROWS */}

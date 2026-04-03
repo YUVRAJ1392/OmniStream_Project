@@ -12,6 +12,7 @@ import os
 import models
 import schemas
 from database import engine, SessionLocal
+from textblob import TextBlob
 
 # 1. Load Hit/Flop AI (Only need to do this once!)
 if os.path.exists("omnistream_model.pkl"):
@@ -370,6 +371,66 @@ def create_review(movie_id: int, review: schemas.ReviewCreate, db: Session = Dep
     # Attach the author's name manually for the response schema
     new_review.author_name = current_user.name 
     return new_review
+
+@app.get("/api/movies/{movie_id}/reviews")
+def get_movie_reviews(movie_id: int, db: Session = Depends(get_db)):
+    """
+    Fetches all reviews for a movie and performs live NLP sentiment analysis.
+    """
+    # Fetch all reviews for this movie from the database (newest first)
+    reviews = db.query(models.Review).filter(models.Review.movie_id == movie_id).order_by(models.Review.id.desc()).all()
+
+    if not reviews:
+        return {"overall_sentiment": "No data yet", "reviews": []}
+
+    review_data = []
+    total_polarity = 0.0
+
+    for r in reviews:
+        # 1. Run the NLP Engine on the comment
+        analysis = TextBlob(r.content)
+        polarity = analysis.sentiment.polarity  # Returns a float between -1.0 (Angry) and 1.0 (Happy)
+        
+        # 2. Assign the individual badge
+        if polarity > 0.15:
+            sentiment_badge = "Positive 😊"
+            color = "emerald"
+        elif polarity < -0.15:
+            sentiment_badge = "Negative 😡"
+            color = "red"
+        else:
+            sentiment_badge = "Neutral 😐"
+            color = "zinc"
+
+        total_polarity += polarity
+
+        # Optional: Grab the user's name if the relationship exists, otherwise use user_id
+        author_name = r.user.name if hasattr(r, 'user') and r.user else f"U{r.user_id}"
+
+        review_data.append({
+            "id": r.id,
+            "content": r.content,
+            "rating": r.rating,
+            "user_id": r.user_id, 
+            "author_name": author_name,
+            "sentiment_badge": sentiment_badge,
+            "color": color
+        })
+
+    # 3. Calculate the Overall Movie Sentiment
+    avg_polarity = total_polarity / len(reviews)
+    
+    if avg_polarity > 0.15:
+        overall_sentiment = "Highly Positive 🌟"
+    elif avg_polarity < -0.15:
+        overall_sentiment = "Mostly Negative 📉"
+    else:
+        overall_sentiment = "Mixed Reactions 🎭"
+
+    return {
+        "overall_sentiment": overall_sentiment,
+        "reviews": review_data
+    }
 
 @app.get("/api/users/me", response_model=schemas.UserProfileResponse)
 def get_user_profile(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
