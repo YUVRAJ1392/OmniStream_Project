@@ -12,7 +12,22 @@ import os
 import models
 import schemas
 from database import engine, SessionLocal
-from textblob import TextBlob
+import nltk
+from nltk.sentiment.vader import SentimentIntensityAnalyzer
+import re
+from transformers import pipeline
+
+# --- LOAD THE AI NLP BRAIN ---
+# This will download a ~250MB model the first time you run it, then keep it in memory
+print("🧠 Booting up Deep Learning Sentiment Transformer...")
+sentiment_pipeline = pipeline(
+    "sentiment-analysis", 
+    model="distilbert-base-uncased-finetuned-sst-2-english"
+)
+
+# Download the VADER dictionary (it will only do this once)
+nltk.download('vader_lexicon', quiet=True)
+sia = SentimentIntensityAnalyzer()
 
 # 1. Load Hit/Flop AI (Only need to do this once!)
 if os.path.exists("omnistream_model.pkl"):
@@ -387,45 +402,51 @@ def get_movie_reviews(movie_id: int, db: Session = Depends(get_db)):
     total_polarity = 0.0
 
     for r in reviews:
-        # 1. Run the NLP Engine on the comment
-        analysis = TextBlob(r.content)
-        polarity = analysis.sentiment.polarity  # Returns a float between -1.0 (Angry) and 1.0 (Happy)
-        
-        # 2. Assign the individual badge
-        if polarity > 0.15:
-            sentiment_badge = "Positive 😊"
-            color = "emerald"
-        elif polarity < -0.15:
-            sentiment_badge = "Negative 😡"
-            color = "red"
-        else:
-            sentiment_badge = "Neutral 😐"
+        try:
+            # 1. Run the Transformer AI
+            ai_result = sentiment_pipeline(r.content)[0]
+            label = ai_result['label'] # 'POSITIVE' or 'NEGATIVE'
+            confidence = ai_result['score'] # A float between 0.0 and 1.0
+
+            # 2. Keep the math for the overall score, but set text for the badge
+            if label == 'POSITIVE':
+                compound_score = confidence
+                sentiment_badge = "POSITIVE 😊"
+                color = "emerald"
+            else:
+                compound_score = -confidence
+                sentiment_badge = "NEGATIVE 😡"
+                color = "red"
+                
+        except Exception as e:
+            print(f"⚠️ Transformer failed: {e}")
+            compound_score = 0.0
+            sentiment_badge = "NEUTRAL 😐"
             color = "zinc"
 
-        total_polarity += polarity
-
-        # Optional: Grab the user's name if the relationship exists, otherwise use user_id
+        # Secretly keep tracking the math so we can average it out later
+        total_polarity += compound_score
+            
+        # Grab the user's name if the relationship exists
         author_name = r.user.name if hasattr(r, 'user') and r.user else f"U{r.user_id}"
 
+        # 3. Append to the review array
         review_data.append({
             "id": r.id,
             "content": r.content,
             "rating": r.rating,
             "user_id": r.user_id, 
             "author_name": author_name,
-            "sentiment_badge": sentiment_badge,
+            "sentiment_badge": sentiment_badge, # This will now say POSITIVE 😊 or NEGATIVE 😡
             "color": color
         })
 
-    # 3. Calculate the Overall Movie Sentiment
-    avg_polarity = total_polarity / len(reviews)
-    
-    if avg_polarity > 0.15:
-        overall_sentiment = "Highly Positive 🌟"
-    elif avg_polarity < -0.15:
-        overall_sentiment = "Mostly Negative 📉"
+    # 4. Calculate the Overall Movie Sentiment Score (Keep this as a number!)
+    if len(reviews) > 0:
+        avg_polarity = total_polarity / len(reviews)
+        overall_sentiment = f"{avg_polarity:+.2f} Avg"
     else:
-        overall_sentiment = "Mixed Reactions 🎭"
+        overall_sentiment = "No data"
 
     return {
         "overall_sentiment": overall_sentiment,
