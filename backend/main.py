@@ -330,6 +330,27 @@ def get_recommendations(movie_id: int, db: Session = Depends(get_db)):
 
 # --- NEW: USER FEATURES & PROFILE ---
 
+@app.delete("/api/reviews/{review_id}")
+def delete_review(review_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Deletes a specific review, but only if the logged-in user owns it."""
+    
+    # 1. Find the review in the database
+    review = db.query(models.Review).filter(models.Review.id == review_id).first()
+    
+    # 2. Check if it exists
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+        
+    # 3. SECURITY CHECK: Ensure the user trying to delete it is the author
+    if review.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to delete this review")
+        
+    # 4. Delete and commit
+    db.delete(review)
+    db.commit()
+    
+    return {"message": "Review deleted successfully"}
+
 @app.post("/api/movies/{movie_id}/like")
 def toggle_like_movie(movie_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     """Toggle a movie in the user's liked list."""

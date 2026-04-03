@@ -26,6 +26,28 @@ const UserProfile = ({ onMovieClick }) => {
     window.location.href = "/login"; // Redirect to login page
   };
 
+  // --- NEW: THE DELETE HANDLER ---
+  const handleDeleteReview = async (reviewId) => {
+    // 1. Ask for confirmation
+    if (!window.confirm("Are you sure you want to delete this review?")) return;
+
+    try {
+      // 2. Tell the backend to delete it
+      await fetchWithAuth(`/reviews/${reviewId}`, {
+        method: "DELETE",
+      });
+
+      // 3. Update the React state instantly (Optimistic UI)
+      setProfile((prevProfile) => ({
+        ...prevProfile,
+        reviews: prevProfile.reviews.filter((review) => review.id !== reviewId),
+      }));
+    } catch (error) {
+      alert("Failed to delete review. Please try again.");
+      console.error(error);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-[#121212] flex justify-center items-center">
@@ -150,12 +172,11 @@ const UserProfile = ({ onMovieClick }) => {
                 {profile.reviews.map((review) => (
                   <div
                     key={review.id}
-                    className="bg-black/40 border border-zinc-800/50 p-5 rounded-xl flex flex-col gap-3"
+                    className="bg-black/40 border border-zinc-800/50 p-5 rounded-xl flex flex-col gap-3 group"
                   >
                     <div className="flex justify-between items-start">
                       <span className="text-xs text-zinc-500 uppercase tracking-widest font-bold">
                         Movie ID: {review.movie_id}{" "}
-                        {/* Ideally, we'd fetch the movie title here later */}
                       </span>
                       <span className="text-yellow-500 text-sm tracking-widest">
                         {"★".repeat(review.rating)}
@@ -165,9 +186,20 @@ const UserProfile = ({ onMovieClick }) => {
                     <p className="text-zinc-300 text-sm leading-relaxed italic">
                       "{review.content}"
                     </p>
-                    <span className="text-[10px] text-zinc-600 font-bold mt-auto pt-3 border-t border-zinc-800/50">
-                      {new Date(review.created_at).toLocaleDateString()}
-                    </span>
+
+                    {/* --- UPDATED: Footer with Date and Delete Button --- */}
+                    <div className="flex justify-between items-center mt-auto pt-3 border-t border-zinc-800/50">
+                      <span className="text-[10px] text-zinc-600 font-bold">
+                        {new Date(review.created_at).toLocaleDateString()}
+                      </span>
+
+                      <button
+                        onClick={() => handleDeleteReview(review.id)}
+                        className="text-[10px] bg-red-500/10 text-red-500 border border-red-500/20 hover:bg-red-500 hover:text-white px-2.5 py-1 rounded uppercase tracking-widest font-bold transition-colors opacity-80 hover:opacity-100"
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
